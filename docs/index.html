@@ -1,0 +1,573 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Helmholtz-Spule – Spulenteststand</title>
+<meta name="description" content="Interaktive Simulation: Wie man mit einer Helmholtz-Spule einen Hall-Sensor kalibriert. Diplomarbeit „Aufbau und Charakterisierung eines Spulenteststands“, HTL Hollabrunn.">
+<style>
+:root{
+  --bg:#ffffff; --fg:#1d1d1b; --muted:#7a6855; --card:#f6f3ee; --line:#e2dcd3; --tile:#ffffff;
+  --orange:#ec6608; --yellow:#e5ec08; --blue:#2a6fb0;
+}
+@media (prefers-color-scheme: dark){
+  :root{ --bg:#171614; --fg:#f2efe9; --muted:#bfae9a; --card:#22201d; --line:#3a352f; --tile:#171614; }
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+header,main,footer{max-width:720px;margin:0 auto;padding:0 16px}
+header{padding-top:20px}
+.bar{display:flex;gap:6px;margin-bottom:14px}
+.bar i{display:block;height:7px;background:var(--yellow)}
+.bar i:first-child{flex:1}
+.bar i:not(:first-child){width:7px}
+h1{font-size:1.5rem;line-height:1.15;margin:0 0 4px;font-weight:900}
+h2{font-size:1.15rem;margin:0 0 8px;font-weight:800;display:flex;align-items:center;gap:8px}
+h2::before{content:"";width:5px;height:1.05em;background:var(--orange);display:inline-block}
+.sub{color:var(--muted);margin:0 0 16px;font-size:.95rem}
+.card{background:var(--card);border-radius:14px;padding:14px;margin-bottom:16px}
+.card p{margin:0 0 10px}
+canvas{display:block;width:100%;height:auto;border-radius:10px}
+#field{touch-action:none;cursor:crosshair}
+.row{display:flex;align-items:center;gap:10px;margin:12px 0 0}
+.row label{flex:1;font-weight:600;font-size:.95rem}
+.row output{font-variant-numeric:tabular-nums;color:var(--orange);font-weight:700;text-align:right}
+input[type=range]{width:100%;accent-color:var(--orange);height:30px;margin:2px 0 0}
+.hint{color:var(--muted);font-size:.85rem;margin:4px 0 0}
+.tiles{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:12px}
+.tile{background:var(--tile);border-radius:10px;padding:8px 9px}
+.tile b{display:block;font-size:1.12rem;color:var(--orange);font-variant-numeric:tabular-nums;white-space:nowrap}
+.tile span{font-size:.75rem;color:var(--muted);line-height:1.25;display:block}
+.btns{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
+button{font:inherit;font-weight:700;border-radius:10px;padding:10px 14px;cursor:pointer;border:2px solid var(--orange);background:transparent;color:var(--fg)}
+button.primary{background:var(--orange);color:#fff}
+button:disabled{opacity:.4;cursor:default}
+.chip{display:inline-block;font-size:.8rem;font-weight:700;padding:2px 8px;border-radius:99px;background:var(--yellow);color:#1d1d1b}
+.chip.bad{background:var(--orange);color:#fff}
+ol.steps{margin:0 0 10px;padding-left:1.3em}
+ol.steps li{margin-bottom:4px}
+.formula{font-family:ui-serif,Georgia,serif;font-size:1.05rem;text-align:center;margin:8px 0 2px}
+.legend{display:flex;align-items:center;gap:8px;font-size:.8rem;color:var(--muted);margin-top:8px}
+.legend i{flex:1;height:10px;border-radius:5px;background:linear-gradient(90deg,#fffbe0,#e5ec08 33%,#ec6608 67%,#5a3d2b)}
+.seg{display:flex;border:1px solid var(--line);border-radius:10px;overflow:hidden;margin:4px 0 10px}
+.seg button{flex:1;border:0;border-radius:0;background:transparent;color:var(--fg);padding:9px 6px;font-weight:600}
+.seg button[aria-pressed="true"]{background:var(--fg);color:var(--bg);font-weight:800}
+.stage{position:relative;aspect-ratio:1;border-radius:10px;overflow:hidden;background:var(--card)}
+.stage canvas{position:absolute;inset:0;width:100%;height:100%}
+#gl{touch-action:none;cursor:grab}
+.stage canvas[hidden]{display:none}
+.tag{position:absolute;left:10px;bottom:8px;font-size:.78rem;color:var(--muted);pointer-events:none}
+.small{font-size:.85rem;color:var(--muted)}
+footer{padding-bottom:32px;color:var(--muted);font-size:.85rem}
+</style>
+</head>
+<body>
+<header>
+  <div class="bar"><i></i><i></i><i></i><i></i><i></i></div>
+  <h1>Die Helmholtz-Spule</h1>
+  <p class="sub">Wie wir unseren Magnetfeld-Sensor kalibrieren · Diplomarbeit „Aufbau und Charakterisierung eines Spulenteststands“, HTL Hollabrunn</p>
+</header>
+
+<main>
+  <section class="card">
+    <h2>1 · Das Feld zwischen den Spulen</h2>
+    <p id="introText"></p>
+    <div class="seg" role="group" aria-label="Ansicht">
+      <button id="vModel" aria-pressed="true">Modell</button>
+      <button id="vSim" aria-pressed="false">Magnetfeld</button>
+      <button id="vCut" aria-pressed="false">Schnitt</button>
+    </div>
+    <div class="stage">
+      <canvas id="gl" aria-label="3D-Modell der Helmholtz-Spule"></canvas>
+      <canvas id="field" width="640" height="640" aria-label="Schnittbild des Magnetfelds" hidden></canvas>
+      <span class="tag" id="tag">zum Drehen wischen</span>
+    </div>
+    <div class="legend"><span>0 mT</span><i></i><span>10 mT</span></div>
+    <p class="hint">Farbe = Feldstärke · Linien = Feldlinien · weiß umrandet = Bereich, in dem das Feld auf 1 % gleich ist</p>
+
+    <div class="tiles">
+      <div class="tile"><b id="tSensor">–</b><span>Feld am Sensor</span></div>
+      <div class="tile"><b id="tCenter">–</b><span>Feld in der Mitte</span></div>
+      <div class="tile"><b id="tDev">–</b><span>Unterschied zur Mitte</span></div>
+    </div>
+
+    <div class="row"><label for="cur">Stromstärke</label><output id="curO"></output></div>
+    <input id="cur" type="range" min="0" max="1000" step="2" value="506">
+    <div class="row"><label for="dist">Abstand der Spulen</label><output id="distO"></output></div>
+    <input id="dist" type="range" min="12" max="66" step="1" value="30">
+    <p class="hint">Unsere Spule: Radius R = 30 mm, je 330 Windungen. Bei Abstand = Radius ist es eine echte Helmholtz-Spule.</p>
+    <div class="btns">
+      <button id="bCenter">Sensor in die Mitte</button>
+      <button id="bHelm">Abstand = Radius</button>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>2 · Warum gerade diese Spule?</h2>
+    <p>Bei einer Helmholtz-Spule kann man das Feld in der Mitte <b>genau ausrechnen</b>, ohne es zu messen:</p>
+    <p class="formula">B = (4/5)<sup>3/2</sup> · μ₀ · N · I / R</p>
+    <p class="small" style="text-align:center;margin-bottom:12px">μ₀ = Naturkonstante · N = Windungen · I = Strom · R = Radius</p>
+    <p>Und: Rund um die Mitte ist das Feld <b>fast überall gleich stark</b>. Sitzt der Sensor ein paar Millimeter daneben, misst er trotzdem fast denselben Wert. Probier oben, den Abstand zu verändern: Der gleichmäßige Bereich wird dann viel kleiner.</p>
+  </section>
+
+  <section class="card">
+    <h2>3 · Kalibrier den Sensor!</h2>
+    <p>Jeder Sensor misst ab Werk ein bisschen falsch. Unser simulierter Sensor auch. So findest du heraus, um wie viel:</p>
+    <ol class="steps">
+      <li>Stell oben eine Stromstärke ein.</li>
+      <li>Tipp auf <b>Messpunkt aufnehmen</b>. Der Sensor misst, die Formel liefert den richtigen Wert.</li>
+      <li>Wiederhole das bei 3–4 verschiedenen Strömen, dann <b>Kalibrieren</b>.</li>
+    </ol>
+    <canvas id="cal" width="640" height="420" aria-label="Messwert über Sollwert"></canvas>
+    <div class="tiles">
+      <div class="tile"><b id="cRaw">–</b><span>Sensor zeigt</span></div>
+      <div class="tile"><b id="cTrue">–</b><span>Sollwert (Formel)</span></div>
+      <div class="tile"><b id="cCorr">–</b><span id="cCorrL">nach Kalibrierung</span></div>
+    </div>
+    <div class="btns">
+      <button class="primary" id="bPoint">Messpunkt aufnehmen</button>
+      <button id="bCal" disabled>Kalibrieren</button>
+      <button id="bReset">Neu starten</button>
+    </div>
+    <p class="hint" id="calMsg">Noch keine Messpunkte.</p>
+  </section>
+</main>
+
+<footer>
+  Benedikt Klein · Yonathan Pieber · betreut von Dipl.-Ing. Dr. Georg Harrer · HTL Hollabrunn<br>
+  Alles wird direkt auf deinem Gerät mit dem Biot-Savart-Gesetz berechnet. Es werden keine Daten gesendet oder gespeichert. 3D-Darstellung mit three.js (MIT-Lizenz).
+</footer>
+
+<script src="vendor/three.min.js"></script>
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+const MU0 = 4e-7 * Math.PI;
+const R = 0.030, N = 330;            // unsere Helmholtz-Spule
+const VIEW = 0.060;                  // Bildausschnitt ±60 mm
+const GRID = 161;
+
+// ---------- Physik: Feld einer Kreisschleife (exakt, elliptische Integrale) ----------
+function ellipKE(m){
+  let a = 1, b = Math.sqrt(1 - m), sum = 0.5 * m, pow = 0.5;
+  for (let i = 0; i < 30 && Math.abs(a - b) > 1e-15; i++){
+    const c = (a - b) / 2, an = (a + b) / 2; b = Math.sqrt(a * b); a = an;
+    pow *= 2; sum += pow * c * c;
+  }
+  const K = Math.PI / (2 * a);
+  return [K, K * (1 - sum)];
+}
+// Feld (Br, Bz) einer Schleife mit Radius R in Höhe z0, Strom N*I
+function loop(r, z, z0, I){
+  const dz = z - z0, q = (R + r) ** 2 + dz * dz, m = Math.min(4 * R * r / q, 1 - 1e-12);
+  const [K, E] = ellipKE(m), d2 = (R - r) ** 2 + dz * dz, f = MU0 * N * I / (2 * Math.PI * Math.sqrt(q));
+  const bz = f * (K + (R * R - r * r - dz * dz) / d2 * E);
+  const br = r < 1e-9 ? 0 : f * dz / r * (-K + (R * R + r * r + dz * dz) / d2 * E);
+  return [br, bz];
+}
+// Feld in der Seitenansicht: x (quer, mit Vorzeichen), z (Achse)
+function field(x, z, d, I){
+  const r = Math.abs(x), a = loop(r, z, -d / 2, I), b = loop(r, z, d / 2, I);
+  const br = a[0] + b[0], s = x < 0 ? -1 : 1;
+  return [s * br, a[1] + b[1]];
+}
+const centerField = (d, I) => field(0, 0, d, I)[1];
+
+// ---------- Zustand ----------
+const st = { I: 0.506, d: 0.030, sx: 0, sz: 0 };
+const fmtB = b => (Math.abs(b) < 0.0995e-3 ? (b * 1e6).toFixed(0) + " µT" : (b * 1e3).toFixed(2) + " mT");
+
+// ---------- Feldbild ----------
+const cv = $("field"), vctx = cv.getContext("2d"), W = cv.width;
+const fieldCv = document.createElement("canvas"); fieldCv.width = fieldCv.height = W;
+const fctx = fieldCv.getContext("2d");
+// Im Bild liegt die Spulenachse waagrecht (wie beim echten Aufbau): z (Achse) nach rechts, x (quer) nach oben
+const scr = (x, z) => [(z + VIEW) / (2 * VIEW) * W, (VIEW - x) / (2 * VIEW) * W];
+const unscr = (px, py) => [VIEW - py / W * 2 * VIEW, px / W * 2 * VIEW - VIEW];
+// Rasterindex (Zeile j = z, Spalte i = x) für Bildpixel (Spalte u, Zeile v)
+const gidx = (u, v) => (GRID - 1 - u) * GRID + (GRID - 1 - v);
+const off = document.createElement("canvas"); off.width = off.height = GRID;
+const maskCv = document.createElement("canvas"); maskCv.width = maskCv.height = GRID;
+const STOPS = [[255,251,224],[229,236,8],[236,102,8],[90,61,43]];
+function ramp(v){
+  v = Number.isFinite(v) ? Math.min(1, Math.max(0, v)) : 1;   // direkt im Draht: maximal
+  const n = STOPS.length - 1, i = Math.min(n - 1, Math.floor(v * n)), f = v * n - i;
+  return STOPS[i].map((c, k) => Math.round(c + (STOPS[i + 1][k] - c) * f));
+}
+let mag = new Float32Array(GRID * GRID), cacheKey = "";
+function computeGrid(){
+  const key = st.d.toFixed(5);                // Form hängt nur vom Abstand ab, Strom skaliert linear
+  if (key === cacheKey) return; cacheKey = key;
+  for (let j = 0; j < GRID; j++){
+    const z = VIEW - 2 * VIEW * j / (GRID - 1);
+    for (let i = 0; i < GRID; i++){
+      const x = -VIEW + 2 * VIEW * i / (GRID - 1), b = field(x, z, st.d, 1);
+      mag[j * GRID + i] = Math.hypot(b[0], b[1]);
+    }
+  }
+}
+function streamline(x, z, dir){
+  const pts = [[x, z]], h = 0.0006;
+  for (let n = 0; n < 900; n++){
+    const step = (px, pz) => { const b = field(px, pz, st.d, 1), m = Math.hypot(b[0], b[1]) || 1; return [dir * b[0] / m, dir * b[1] / m]; };
+    const k1 = step(x, z), k2 = step(x + h / 2 * k1[0], z + h / 2 * k1[1]);
+    x += h * k2[0]; z += h * k2[1];
+    if (Math.abs(x) > VIEW * 1.05 || Math.abs(z) > VIEW * 1.05) { pts.push([x, z]); break; }
+    if (Math.hypot(Math.abs(x) - R, Math.abs(z) - st.d / 2) < 0.0015) break;   // in den Draht gelaufen
+    pts.push([x, z]);
+    if (n > 20 && Math.hypot(x - pts[0][0], z - pts[0][1]) < h * 0.8) break;  // geschlossen
+  }
+  return pts;
+}
+let linesCache = { key: "", lines: [] };
+function fieldLines(){
+  const key = st.d.toFixed(5);
+  if (linesCache.key === key) return linesCache.lines;
+  const lines = [];
+  for (const x0 of [0, 0.006, 0.012, 0.018, 0.023, 0.027, 0.034, 0.042, 0.052]){
+    for (const s of x0 === 0 ? [1] : [1, -1]){
+      lines.push(streamline(s * x0, 0, 1).reverse().concat(streamline(s * x0, 0, -1)));
+    }
+  }
+  linesCache = { key, lines }; return lines;
+}
+function homogeneousContour(){
+  // zusammenhängender Bereich um die Mitte, in dem |B| höchstens 1 % vom Mittelwert abweicht
+  const b0 = centerField(st.d, 1), dev = (i, j) => Math.abs(mag[j * GRID + i] / b0 - 1) - 0.01;
+  const inside = new Uint8Array(GRID * GRID), c0 = (GRID - 1) / 2, stack = [[c0, c0]];
+  while (stack.length){
+    const [i, j] = stack.pop();
+    if (i < 0 || j < 0 || i >= GRID || j >= GRID || inside[j * GRID + i] || dev(i, j) >= 0) continue;
+    inside[j * GRID + i] = 1; stack.push([i + 1, j], [i - 1, j], [i, j + 1], [i, j - 1]);
+  }
+  // Marching Squares nur an der Grenze dieses Bereichs
+  const val = (i, j) => inside[j * GRID + i] ? dev(i, j) : Math.max(1e-6, Math.abs(dev(i, j)));
+  const P = (i, j) => [ -VIEW + 2 * VIEW * i / (GRID - 1), VIEW - 2 * VIEW * j / (GRID - 1) ];
+  const lerp = (a, b, va, vb) => { const t = va / (va - vb); return [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]; };
+  const segs = [];
+  for (let j = 0; j < GRID - 1; j++) for (let i = 0; i < GRID - 1; i++){
+    const c = [[i, j], [i + 1, j], [i + 1, j + 1], [i, j + 1]], v = c.map(p => val(p[0], p[1])), pts = [];
+    for (let e = 0; e < 4; e++){
+      const a = e, b = (e + 1) % 4;
+      if ((v[a] < 0) !== (v[b] < 0)) pts.push(lerp(P(...c[a]), P(...c[b]), v[a], v[b]));
+    }
+    if (pts.length >= 2) segs.push([pts[0], pts[1]]);
+    if (pts.length === 4) segs.push([pts[2], pts[3]]);
+  }
+  return { segs, inside };
+}
+function drawField(){
+  const ctx = fctx;
+  computeGrid();
+  const BMAX = 10e-3;   // feste Farbskala 0 … 10 mT, damit man den Strom "sieht"
+  const octx = off.getContext("2d"), img = octx.createImageData(GRID, GRID);
+  for (let v = 0; v < GRID; v++) for (let u = 0; u < GRID; u++){
+    const c = ramp(Math.sqrt(mag[gidx(u, v)] * st.I / BMAX));
+    img.data.set([c[0], c[1], c[2], 255], (v * GRID + u) * 4);
+  }
+  octx.putImageData(img, 0, 0);
+  ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = "high";
+  ctx.drawImage(off, 0, 0, W, W);
+
+  // Feldlinien
+  ctx.strokeStyle = "rgba(29,29,27,.45)"; ctx.lineWidth = 1.6;
+  for (const l of fieldLines()){
+    ctx.beginPath(); l.forEach((p, n) => n ? ctx.lineTo(...scr(p[0], p[1])) : ctx.moveTo(...scr(p[0], p[1]))); ctx.stroke();
+  }
+  // 1-%-Bereich: aufgehellt und weiß umrandet
+  const hom = homogeneousContour(), cell = W / (GRID - 1);
+  const mctx = maskCv.getContext("2d"), mimg = mctx.createImageData(GRID, GRID);
+  for (let v = 0; v < GRID; v++) for (let u = 0; u < GRID; u++) if (hom.inside[gidx(u, v)]) mimg.data.set([255, 255, 255, 80], (v * GRID + u) * 4);
+  mctx.putImageData(mimg, 0, 0); ctx.drawImage(maskCv, -cell / 2, -cell / 2, W + cell, W + cell);
+  ctx.strokeStyle = "#fff"; ctx.lineWidth = 3.5; ctx.lineCap = "round"; ctx.beginPath();
+  for (const [a, b] of hom.segs){ ctx.moveTo(...scr(a[0], a[1])); ctx.lineTo(...scr(b[0], b[1])); }
+  ctx.stroke(); ctx.lineCap = "butt";
+
+  // Spulen (Schnitt durch die Wicklung): oben Strom aus dem Bild, unten hinein
+  for (const zc of [-st.d / 2, st.d / 2]){
+    for (const s of [1, -1]){
+      const [px, py] = scr(s * R, zc), w = 16, h = 26;
+      ctx.fillStyle = "#ec6608"; ctx.strokeStyle = "#1d1d1b"; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.roundRect(px - w / 2, py - h / 2, w, h, 3); ctx.fill(); ctx.stroke();
+      ctx.fillStyle = "#1d1d1b"; ctx.font = "bold 17px system-ui,sans-serif"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+      ctx.fillText(s > 0 ? "•" : "×", px, py + 0.5);
+    }
+  }
+  // Achsenbeschriftung
+  ctx.textAlign = "center"; ctx.textBaseline = "alphabetic";
+  ctx.fillStyle = "rgba(29,29,27,.8)"; ctx.font = "600 22px system-ui,sans-serif";
+  for (const [zc, txt] of [[-st.d / 2, "Spule 1"], [st.d / 2, "Spule 2"]]){ const q = scr(R, zc); ctx.fillText(txt, q[0], q[1] - 24); }
+  ctx.textAlign = "left"; ctx.font = "19px system-ui,sans-serif"; ctx.fillText("Bild: 12 × 12 cm", 12, W - 14);
+
+  // Sensor
+  const [sx, sy] = scr(st.sx, st.sz);
+  ctx.fillStyle = "#1d1d1b"; ctx.strokeStyle = "#fff"; ctx.lineWidth = 2.5;
+  ctx.beginPath(); ctx.roundRect(sx - 11, sy - 15, 22, 30, 3); ctx.fill(); ctx.stroke();
+  ctx.fillStyle = "#e5ec08"; ctx.beginPath(); ctx.arc(sx, sy, 3.5, 0, 7); ctx.fill();
+  // Feldpfeil am Sensor
+  const b = field(st.sx, st.sz, st.d, st.I), m = Math.hypot(b[0], b[1]);
+  if (m > 1e-6){
+    const L = 26 + 34 * Math.min(1, m / BMAX), ux = b[0] / m, uz = b[1] / m, ex = sx + uz * L, ey = sy - ux * L;
+    ctx.strokeStyle = "#fff"; ctx.lineWidth = 6; ctx.lineCap = "round";
+    ctx.beginPath(); ctx.moveTo(sx, sy); ctx.lineTo(ex, ey); ctx.stroke();
+    ctx.strokeStyle = "#1d1d1b"; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.moveTo(sx, sy); ctx.lineTo(ex, ey);
+    const ang = Math.atan2(ey - sy, ex - sx);
+    ctx.moveTo(ex, ey); ctx.lineTo(ex - 10 * Math.cos(ang - .5), ey - 10 * Math.sin(ang - .5));
+    ctx.moveTo(ex, ey); ctx.lineTo(ex - 10 * Math.cos(ang + .5), ey - 10 * Math.sin(ang + .5));
+    ctx.stroke(); ctx.lineCap = "butt";
+  }
+}
+
+// ---------- 3D-Modell (three.js): unsere gedruckte Helmholtz-Spule, wahlweise mit Magnetfeld ----------
+// Einheiten im 3D-Modell: Millimeter. Spulenachse = x, oben = y, die Schnittfläche ist die Ebene z = 0.
+const glCv = $("gl");
+let mode = "model", renderer = null;
+try { renderer = new THREE.WebGLRenderer({ canvas: glCv, antialias: true, alpha: true }); } catch (e) { renderer = null; }
+const scene = new THREE.Scene();
+const cam = new THREE.PerspectiveCamera(30, 1, 10, 3000);
+const ORBIT = { az: 0.78, el: 0.36, dist: 300, ty: -8 };
+const FRONT = { az: 0, el: 0, dist: 60 / Math.tan(15 * Math.PI / 180), ty: 0 };   // Schnittfläche füllt genau das Bild
+const camState = { ...ORBIT };
+let userOrbit = { ...ORBIT };
+function placeCam(){
+  const c = camState;
+  cam.position.set(c.dist * Math.cos(c.el) * Math.sin(c.az), c.ty + c.dist * Math.sin(c.el), c.dist * Math.cos(c.el) * Math.cos(c.az));
+  cam.lookAt(0, c.ty, 0);
+}
+
+scene.add(new THREE.HemisphereLight(0xffffff, 0x50505a, 1.7));
+const sun = new THREE.DirectionalLight(0xffffff, 2.4); sun.position.set(140, 260, 180); scene.add(sun);
+const fill = new THREE.DirectionalLight(0xffffff, 0.7); fill.position.set(-200, 60, -80); scene.add(fill);
+
+// Schnitt: alles vor der Fläche (z > 0) wird weggeschnitten
+const cutPlane = new THREE.Plane(new THREE.Vector3(0, 0, -1), 0);
+if (renderer) renderer.localClippingEnabled = true;
+
+const blue = new THREE.MeshStandardMaterial({ color: 0x2338b8, roughness: 0.5, side: THREE.DoubleSide });
+const black = new THREE.MeshStandardMaterial({ color: 0x1c1c1e, roughness: 0.75, side: THREE.DoubleSide });
+const copperSide = new THREE.MeshStandardMaterial({ color: 0xb8622f, metalness: 0.45, roughness: 0.38, side: THREE.DoubleSide });
+// Kupferlack-Draht: feine Windungen als Streifen
+const wireCv = document.createElement("canvas"); wireCv.width = 8; wireCv.height = 16;
+{ const g = wireCv.getContext("2d"), gr = g.createLinearGradient(0, 0, 0, 16);
+  gr.addColorStop(0, "#6e3214"); gr.addColorStop(0.25, "#c8723a"); gr.addColorStop(0.5, "#f0a46a"); gr.addColorStop(0.75, "#c8723a"); gr.addColorStop(1, "#6e3214");
+  g.fillStyle = gr; g.fillRect(0, 0, 8, 16); }
+const wireTex = new THREE.CanvasTexture(wireCv);
+wireTex.colorSpace = THREE.SRGBColorSpace; wireTex.wrapS = wireTex.wrapT = THREE.RepeatWrapping; wireTex.repeat.set(1, 22);
+const copper = new THREE.MeshStandardMaterial({ map: wireTex, metalness: 0.4, roughness: 0.35, side: THREE.DoubleSide });
+const solids = [blue, black, copperSide, copper];
+
+// Kreisring mit Breite w in Achsrichtung (Achse = y, danach gedreht); gap = Schlitz oben (rad)
+function annulus(rin, rout, w, gap, matOut, matSide = matOut, matIn = matOut){
+  const g = new THREE.Group(), ts = 1.5 * Math.PI + gap / 2, L = 2 * Math.PI - gap;
+  g.add(new THREE.Mesh(new THREE.CylinderGeometry(rout, rout, w, 128, 1, true, ts, L), matOut));
+  g.add(new THREE.Mesh(new THREE.CylinderGeometry(rin, rin, w, 128, 1, true, ts, L), matIn));
+  for (const y of [-w / 2, w / 2]){
+    const ring = new THREE.Mesh(new THREE.RingGeometry(rin, rout, 128, 1, Math.PI / 2 - ts - L, L), matSide);
+    ring.rotation.x = Math.PI / 2; ring.position.y = y; g.add(ring);
+  }
+  return g;
+}
+// eine Spule: Spulenkörper (blau, gedruckt) mit Kupferwicklung, Schlitz oben wie beim Original
+const WIND = 12, FL = 2.6, SLOT = 0.09, RIN = 21, ROUT = 37.5;
+function makeCoil(){
+  const g = new THREE.Group();
+  g.add(annulus(R * 1000 - 3.5, R * 1000 + 3.5, WIND, 0, copper, copperSide));
+  g.add(annulus(RIN, R * 1000 - 3.5, WIND, SLOT, blue));
+  for (const s of [-1, 1]){ const f = annulus(RIN, ROUT, FL, SLOT, blue); f.position.y = s * (WIND + FL) / 2; g.add(f); }
+  g.rotation.z = -Math.PI / 2;     // Achse von y nach x drehen
+  return g;
+}
+const coil1 = makeCoil(), coil2 = makeCoil();
+scene.add(coil1, coil2);
+const base = new THREE.Mesh(new THREE.BoxGeometry(104, 14, 64), black);
+base.position.y = -ROUT + 4 - 7; scene.add(base);
+
+const fieldTex = new THREE.CanvasTexture(fieldCv); fieldTex.colorSpace = THREE.SRGBColorSpace;
+const fieldMesh = new THREE.Mesh(new THREE.PlaneGeometry(VIEW * 2000, VIEW * 2000),
+  new THREE.MeshBasicMaterial({ map: fieldTex, side: THREE.DoubleSide, transparent: true, opacity: 0.75, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 }));
+scene.add(fieldMesh);
+
+function render(){
+  if (mode === "cut" && !animating){
+    vctx.drawImage(fieldCv, 0, 0); return;
+  }
+  if (!renderer) return;
+  coil1.position.x = -st.d * 500; coil2.position.x = st.d * 500;
+  const sim = mode !== "model";
+  fieldMesh.visible = sim;
+  fieldMesh.material.opacity = mode === "cut" ? 0.75 + 0.25 * flyK : 0.75;   // halb durchsichtig, damit man die Spulen dahinter sieht
+  for (const m of solids) m.clippingPlanes = sim ? [cutPlane] : [];
+  if (sim) fieldTex.needsUpdate = true;
+  placeCam(); renderer.render(scene, cam);
+}
+function resize(){
+  if (!renderer) return;
+  const w = glCv.clientWidth || 320;
+  renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
+  renderer.setSize(w, w, false); cam.aspect = 1; cam.updateProjectionMatrix(); render();
+}
+if (window.ResizeObserver) new ResizeObserver(resize).observe(glCv); else window.addEventListener("resize", resize);
+
+// Drehen per Wischen
+let rot = null;
+glCv.addEventListener("pointerdown", e => { rot = [e.clientX, e.clientY]; glCv.setPointerCapture(e.pointerId); glCv.style.cursor = "grabbing"; });
+glCv.addEventListener("pointermove", e => {
+  if (!rot || animating) return;
+  camState.az -= (e.clientX - rot[0]) * 0.009;
+  camState.el = Math.max(-0.15, Math.min(1.3, camState.el + (e.clientY - rot[1]) * 0.007));
+  rot = [e.clientX, e.clientY]; userOrbit = { ...camState }; render();
+});
+const endRot = () => { rot = null; glCv.style.cursor = "grab"; };
+glCv.addEventListener("pointerup", endRot); glCv.addEventListener("pointercancel", endRot);
+
+// Kamerafahrten zwischen 3D und Schnitt
+let animating = false, flyK = 1;
+const ease = x => x < 0.5 ? 2 * x * x : 1 - (-2 * x + 2) ** 2 / 2;
+function fly(target, done){
+  const from = { ...camState }, t0 = performance.now(), dur = 1000;
+  // kürzester Weg um die Achse
+  let daz = target.az - from.az; daz = Math.atan2(Math.sin(daz), Math.cos(daz));
+  animating = true;
+  const step = now => {
+    const k = ease(Math.min(1, (now - t0) / dur)); flyK = k;
+    camState.az = from.az + daz * k;
+    for (const key of ["el", "dist", "ty"]) camState[key] = from[key] + (target[key] - from[key]) * k;
+    render();
+    if (k < 1) requestAnimationFrame(step); else { animating = false; done && done(); }
+  };
+  requestAnimationFrame(step);
+}
+const TEXTS = {
+  model: "Das ist unsere <b>Helmholtz-Spule</b>: zwei gleiche Spulen mit je 330 Windungen Kupferdraht auf 3D-gedruckten Spulenkörpern. Wisch zum Drehen. Tipp auf <b>Magnetfeld</b>, um zu sehen, was beim Einschalten passiert.",
+  sim: "Wir schneiden die Spulen in Gedanken <b>der Länge nach durch</b>. Auf der Schnittfläche siehst du das Magnetfeld: Farbe = Stärke, Linien = Feldlinien. Tipp auf <b>Schnitt</b>, um genau von vorne draufzuschauen.",
+  cut: "Jetzt schaust du <b>genau von vorne</b> auf die Schnittfläche. Die orangen Kästchen sind die Stellen, an denen der Draht durch die Fläche geht. <b>Verschieb den Sensor</b> (schwarzes Kästchen) mit dem Finger und schau, was er misst."
+};
+function setMode(m){
+  if (animating) return;
+  const prev = mode; mode = m;
+  for (const [id, k] of [["vModel", "model"], ["vSim", "sim"], ["vCut", "cut"]]) $(id).setAttribute("aria-pressed", k === m);
+  $("introText").innerHTML = TEXTS[m];
+  $("tag").textContent = m === "cut" ? "Sensor mit dem Finger verschieben" : "zum Drehen wischen";
+  if (m === "cut"){
+    if (!renderer){ glCv.hidden = true; cv.hidden = false; render(); return; }
+    fly(FRONT, () => { glCv.hidden = true; cv.hidden = false; render(); });
+  } else {
+    if (prev === "cut"){ cv.hidden = true; glCv.hidden = false; Object.assign(camState, FRONT); fly(userOrbit); }
+    else render();
+  }
+}
+$("vModel").addEventListener("click", () => setMode("model"));
+$("vSim").addEventListener("click", () => setMode("sim"));
+$("vCut").addEventListener("click", () => setMode("cut"));
+if (!renderer){ $("vModel").hidden = $("vSim").hidden = true; }
+function updateField(){
+  $("curO").value = Math.round(st.I * 1000) + " mA";
+  $("distO").value = Math.round(st.d * 1000) + " mm" + (Math.abs(st.d - R) < 5e-4 ? " = R" : "");
+  const b = field(st.sx, st.sz, st.d, st.I), bs = Math.hypot(b[0], b[1]), b0 = centerField(st.d, st.I);
+  $("tSensor").textContent = fmtB(bs);
+  $("tCenter").textContent = fmtB(b0);
+  $("tDev").textContent = b0 > 0 ? ((bs / b0 - 1) * 100).toFixed(1).replace("-0.0", "0.0") + " %" : "–";
+  drawField(); render(); updateCal();
+}
+
+// Sensor ziehen
+let dragging = false;
+function pointerPos(e){
+  const r = cv.getBoundingClientRect();
+  return unscr((e.clientX - r.left) / r.width * W, (e.clientY - r.top) / r.height * W);
+}
+function moveSensor(e){
+  const [x, z] = pointerPos(e), lim = VIEW * 0.95;
+  st.sx = Math.max(-lim, Math.min(lim, x)); st.sz = Math.max(-lim, Math.min(lim, z));
+  updateField();
+}
+cv.addEventListener("pointerdown", e => { dragging = true; cv.setPointerCapture(e.pointerId); moveSensor(e); });
+cv.addEventListener("pointermove", e => { if (dragging) moveSensor(e); });
+cv.addEventListener("pointerup", () => { dragging = false; });
+cv.addEventListener("pointercancel", () => { dragging = false; });
+
+$("cur").addEventListener("input", e => { st.I = +e.target.value / 1000; updateField(); });
+$("dist").addEventListener("input", e => { st.d = +e.target.value / 1000; updateField(); });
+$("bCenter").addEventListener("click", () => { st.sx = 0; st.sz = 0; updateField(); });
+$("bHelm").addEventListener("click", () => { st.d = R; $("dist").value = 30; updateField(); });
+
+// ---------- Kalibrierung ----------
+// Der simulierte Sensor hat einen Verstärkungsfehler und einen Nullpunktfehler (zufällig pro Besuch)
+const GAIN = 1 + (0.05 + Math.random() * 0.06) * (Math.random() < 0.5 ? -1 : 1);
+const OFFSET = (0.10 + Math.random() * 0.15) * 1e-3 * (Math.random() < 0.5 ? -1 : 1);
+const noise = () => (Math.random() - 0.5) * 0.02e-3;
+let points = [], fit = null;
+const sensorTrue = () => { const b = field(st.sx, st.sz, st.d, st.I); return Math.hypot(b[0], b[1]); };
+const sensorRaw = () => GAIN * sensorTrue() + OFFSET;
+const sollwert = () => centerField(st.d, st.I);   // Formel gilt für die Mitte
+
+const cc = $("cal"), cx = cc.getContext("2d"), CW = cc.width, CH = cc.height;
+function drawCal(){
+  const dark = matchMedia("(prefers-color-scheme: dark)").matches;
+  const fg = dark ? "#f2efe9" : "#1d1d1b", mut = dark ? "#bfae9a" : "#7a6855";
+  cx.clearRect(0, 0, CW, CH);
+  const pl = 74, pr = 16, pt = 16, pb = 56, pw = CW - pl - pr, ph = CH - pt - pb, M = 11;
+  const X = v => pl + v / M * pw, Y = v => pt + ph - v / M * ph;
+  cx.font = "20px system-ui,sans-serif"; cx.fillStyle = mut; cx.strokeStyle = mut; cx.lineWidth = 1;
+  for (let v = 0; v <= 10; v += 2){
+    cx.globalAlpha = .25; cx.beginPath(); cx.moveTo(pl, Y(v)); cx.lineTo(pl + pw, Y(v)); cx.moveTo(X(v), pt); cx.lineTo(X(v), pt + ph); cx.stroke(); cx.globalAlpha = 1;
+    cx.textAlign = "right"; cx.fillText(v, pl - 8, Y(v) + 7);
+    cx.textAlign = "center"; cx.fillText(v, X(v), pt + ph + 24);
+  }
+  cx.fillText("Sollwert aus der Formel (mT)", pl + pw / 2, CH - 6);
+  cx.save(); cx.translate(18, pt + ph / 2); cx.rotate(-Math.PI / 2); cx.fillText("Sensor zeigt (mT)", 0, 0); cx.restore();
+  // ideale Linie
+  cx.strokeStyle = fg; cx.globalAlpha = .5; cx.setLineDash([8, 6]); cx.lineWidth = 2;
+  cx.beginPath(); cx.moveTo(X(0), Y(0)); cx.lineTo(X(M), Y(M)); cx.stroke(); cx.setLineDash([]); cx.globalAlpha = 1;
+  cx.textAlign = "left"; cx.fillStyle = mut; cx.fillText("perfekter Sensor", X(6.6), Y(6.6) + 30);
+  // Fit
+  if (fit){
+    cx.strokeStyle = "#ec6608"; cx.lineWidth = 3; cx.beginPath();
+    cx.moveTo(X(0), Y(fit.b * 1e3)); cx.lineTo(X(M), Y(fit.a * M + fit.b * 1e3)); cx.stroke();
+  }
+  // Punkte
+  for (const p of points){
+    cx.fillStyle = "#ec6608"; cx.strokeStyle = fg; cx.lineWidth = 2;
+    cx.beginPath(); cx.arc(X(p.soll * 1e3), Y(p.ist * 1e3), 8, 0, 7); cx.fill(); cx.stroke();
+  }
+}
+function updateCal(){
+  const raw = sensorRaw(), soll = sollwert();
+  $("cRaw").textContent = fmtB(raw);
+  $("cTrue").textContent = fmtB(soll);
+  if (fit){
+    $("cCorr").textContent = fmtB((raw - fit.b) / fit.a);
+    $("cCorrL").textContent = "nach Kalibrierung";
+  } else {
+    $("cCorr").textContent = "?"; $("cCorrL").textContent = "nach Kalibrierung";
+  }
+  drawCal();
+}
+$("bPoint").addEventListener("click", () => {
+  const outside = Math.abs(sensorTrue() / sollwert() - 1) > 0.01;
+  points.push({ soll: sollwert(), ist: sensorRaw() + noise() });
+  $("bCal").disabled = points.length < 2;
+  $("calMsg").innerHTML = `${points.length} Messpunkt${points.length > 1 ? "e" : ""} aufgenommen.` +
+    (outside ? ' <span class="chip bad">Achtung: Sensor liegt nicht im gleichmäßigen Bereich!</span>' : "") +
+    (points.length < 2 ? " Ändere die Stromstärke und nimm noch einen auf." : "");
+  updateCal();
+});
+$("bCal").addEventListener("click", () => {
+  const n = points.length, mx = points.reduce((s, p) => s + p.soll, 0) / n, my = points.reduce((s, p) => s + p.ist, 0) / n;
+  let sxy = 0, sxx = 0; for (const p of points){ sxy += (p.soll - mx) * (p.ist - my); sxx += (p.soll - mx) ** 2; }
+  if (sxx < 1e-12){ $("calMsg").textContent = "Nimm die Punkte bei unterschiedlichen Stromstärken auf."; return; }
+  const a = sxy / sxx; fit = { a, b: my - a * mx };
+  $("calMsg").innerHTML = `Ergebnis: Der Sensor zeigt <b>${((a - 1) * 100).toFixed(1).replace("-", "−")} %</b> ${a > 1 ? "zu viel" : "zu wenig"} ` +
+    `und hat einen Nullpunktfehler von <b>${(fit.b * 1e3).toFixed(2)} mT</b>. Ab jetzt wird jeder Messwert damit korrigiert. ` +
+    `<span class="chip">kalibriert</span>`;
+  updateCal();
+});
+$("bReset").addEventListener("click", () => { points = []; fit = null; $("bCal").disabled = true; $("calMsg").textContent = "Noch keine Messpunkte."; updateCal(); });
+matchMedia("(prefers-color-scheme: dark)").addEventListener("change", drawCal);
+
+setMode("model");
+updateField();
+</script>
+</body>
+</html>
