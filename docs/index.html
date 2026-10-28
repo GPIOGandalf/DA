@@ -28,7 +28,7 @@ h2::before{content:"";width:5px;height:1.05em;background:var(--orange);display:i
 .card{background:var(--card);border-radius:14px;padding:14px;margin-bottom:16px}
 .card p{margin:0 0 10px}
 canvas{display:block;width:100%;height:auto;border-radius:10px}
-#field{touch-action:none;cursor:grab}
+#field{touch-action:none;cursor:crosshair}
 .row{display:flex;align-items:center;gap:10px;margin:12px 0 0}
 .row label{flex:1;font-weight:600;font-size:.95rem}
 .row output{font-variant-numeric:tabular-nums;color:var(--orange);font-weight:700;text-align:right}
@@ -52,6 +52,11 @@ ol.steps li{margin-bottom:4px}
 .seg{display:flex;border:1px solid var(--line);border-radius:10px;overflow:hidden;margin:4px 0 10px}
 .seg button{flex:1;border:0;border-radius:0;background:transparent;color:var(--fg);padding:9px 6px;font-weight:600}
 .seg button[aria-pressed="true"]{background:var(--fg);color:var(--bg);font-weight:800}
+.stage{position:relative;aspect-ratio:1;border-radius:10px;overflow:hidden;background:var(--card)}
+.stage canvas{position:absolute;inset:0;width:100%;height:100%}
+#gl{touch-action:none;cursor:grab}
+.stage canvas[hidden]{display:none}
+.tag{position:absolute;left:10px;bottom:8px;font-size:.78rem;color:var(--muted);pointer-events:none}
 .small{font-size:.85rem;color:var(--muted)}
 footer{padding-bottom:32px;color:var(--muted);font-size:.85rem}
 </style>
@@ -68,10 +73,15 @@ footer{padding-bottom:32px;color:var(--muted);font-size:.85rem}
     <h2>1 · Das Feld zwischen den Spulen</h2>
     <p id="introText"></p>
     <div class="seg" role="group" aria-label="Ansicht">
-      <button id="v3d" aria-pressed="true">3D-Ansicht</button>
-      <button id="vCut" aria-pressed="false">Schnitt von vorne</button>
+      <button id="vModel" aria-pressed="true">Modell</button>
+      <button id="vSim" aria-pressed="false">Magnetfeld</button>
+      <button id="vCut" aria-pressed="false">Schnitt</button>
     </div>
-    <canvas id="field" width="640" height="640" aria-label="Helmholtz-Spule mit Magnetfeld"></canvas>
+    <div class="stage">
+      <canvas id="gl" aria-label="3D-Modell der Helmholtz-Spule"></canvas>
+      <canvas id="field" width="640" height="640" aria-label="Schnittbild des Magnetfelds" hidden></canvas>
+      <span class="tag" id="tag">zum Drehen wischen</span>
+    </div>
     <div class="legend"><span>0 mT</span><i></i><span>10 mT</span></div>
     <p class="hint">Farbe = Feldstärke · Linien = Feldlinien · weiß umrandet = Bereich, in dem das Feld auf 1 % gleich ist</p>
 
@@ -125,9 +135,10 @@ footer{padding-bottom:32px;color:var(--muted);font-size:.85rem}
 
 <footer>
   Benedikt Klein · Yonathan Pieber · betreut von Dipl.-Ing. Dr. Georg Harrer · HTL Hollabrunn<br>
-  Alles wird direkt auf deinem Gerät mit dem Biot-Savart-Gesetz berechnet. Es werden keine Daten gesendet oder gespeichert.
+  Alles wird direkt auf deinem Gerät mit dem Biot-Savart-Gesetz berechnet. Es werden keine Daten gesendet oder gespeichert. 3D-Darstellung mit three.js (MIT-Lizenz).
 </footer>
 
+<script src="vendor/three.min.js"></script>
 <script>
 "use strict";
 const $ = id => document.getElementById(id);
@@ -170,10 +181,11 @@ const fmtB = b => (Math.abs(b) < 0.0995e-3 ? (b * 1e6).toFixed(0) + " µT" : (b 
 const cv = $("field"), vctx = cv.getContext("2d"), W = cv.width;
 const fieldCv = document.createElement("canvas"); fieldCv.width = fieldCv.height = W;
 const fctx = fieldCv.getContext("2d");
-const toPx = v => (v + VIEW) / (2 * VIEW) * W;          // x -> Pixel
-const toPy = v => (VIEW - v) / (2 * VIEW) * W;          // z -> Pixel (oben = +z)
-const fromPx = p => p / W * 2 * VIEW - VIEW;
-const fromPy = p => VIEW - p / W * 2 * VIEW;
+// Im Bild liegt die Spulenachse waagrecht (wie beim echten Aufbau): z (Achse) nach rechts, x (quer) nach oben
+const scr = (x, z) => [(z + VIEW) / (2 * VIEW) * W, (VIEW - x) / (2 * VIEW) * W];
+const unscr = (px, py) => [VIEW - py / W * 2 * VIEW, px / W * 2 * VIEW - VIEW];
+// Rasterindex (Zeile j = z, Spalte i = x) für Bildpixel (Spalte u, Zeile v)
+const gidx = (u, v) => (GRID - 1 - u) * GRID + (GRID - 1 - v);
 const off = document.createElement("canvas"); off.width = off.height = GRID;
 const maskCv = document.createElement("canvas"); maskCv.width = maskCv.height = GRID;
 const STOPS = [[255,251,224],[229,236,8],[236,102,8],[90,61,43]];
@@ -249,9 +261,9 @@ function drawField(){
   computeGrid();
   const BMAX = 10e-3;   // feste Farbskala 0 … 10 mT, damit man den Strom "sieht"
   const octx = off.getContext("2d"), img = octx.createImageData(GRID, GRID);
-  for (let n = 0; n < mag.length; n++){
-    const c = ramp(Math.sqrt(mag[n] * st.I / BMAX));
-    img.data.set([c[0], c[1], c[2], 255], n * 4);
+  for (let v = 0; v < GRID; v++) for (let u = 0; u < GRID; u++){
+    const c = ramp(Math.sqrt(mag[gidx(u, v)] * st.I / BMAX));
+    img.data.set([c[0], c[1], c[2], 255], (v * GRID + u) * 4);
   }
   octx.putImageData(img, 0, 0);
   ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = "high";
@@ -260,43 +272,42 @@ function drawField(){
   // Feldlinien
   ctx.strokeStyle = "rgba(29,29,27,.45)"; ctx.lineWidth = 1.6;
   for (const l of fieldLines()){
-    ctx.beginPath(); l.forEach((p, n) => n ? ctx.lineTo(toPx(p[0]), toPy(p[1])) : ctx.moveTo(toPx(p[0]), toPy(p[1]))); ctx.stroke();
+    ctx.beginPath(); l.forEach((p, n) => n ? ctx.lineTo(...scr(p[0], p[1])) : ctx.moveTo(...scr(p[0], p[1]))); ctx.stroke();
   }
   // 1-%-Bereich: aufgehellt und weiß umrandet
   const hom = homogeneousContour(), cell = W / (GRID - 1);
   const mctx = maskCv.getContext("2d"), mimg = mctx.createImageData(GRID, GRID);
-  for (let n = 0; n < hom.inside.length; n++) if (hom.inside[n]) mimg.data.set([255, 255, 255, 80], n * 4);
+  for (let v = 0; v < GRID; v++) for (let u = 0; u < GRID; u++) if (hom.inside[gidx(u, v)]) mimg.data.set([255, 255, 255, 80], (v * GRID + u) * 4);
   mctx.putImageData(mimg, 0, 0); ctx.drawImage(maskCv, -cell / 2, -cell / 2, W + cell, W + cell);
   ctx.strokeStyle = "#fff"; ctx.lineWidth = 3.5; ctx.lineCap = "round"; ctx.beginPath();
-  for (const [a, b] of hom.segs){ ctx.moveTo(toPx(a[0]), toPy(a[1])); ctx.lineTo(toPx(b[0]), toPy(b[1])); }
+  for (const [a, b] of hom.segs){ ctx.moveTo(...scr(a[0], a[1])); ctx.lineTo(...scr(b[0], b[1])); }
   ctx.stroke(); ctx.lineCap = "butt";
 
-  // Spulen (Schnitt durch die Wicklung): links Strom aus dem Bild, rechts hinein
+  // Spulen (Schnitt durch die Wicklung): oben Strom aus dem Bild, unten hinein
   for (const zc of [-st.d / 2, st.d / 2]){
-    for (const s of [-1, 1]){
-      const px = toPx(s * R), py = toPy(zc), w = 26, h = 16;
+    for (const s of [1, -1]){
+      const [px, py] = scr(s * R, zc), w = 16, h = 26;
       ctx.fillStyle = "#ec6608"; ctx.strokeStyle = "#1d1d1b"; ctx.lineWidth = 2;
       ctx.beginPath(); ctx.roundRect(px - w / 2, py - h / 2, w, h, 3); ctx.fill(); ctx.stroke();
       ctx.fillStyle = "#1d1d1b"; ctx.font = "bold 17px system-ui,sans-serif"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
-      ctx.fillText(s < 0 ? "•" : "×", px, py + 0.5);
+      ctx.fillText(s > 0 ? "•" : "×", px, py + 0.5);
     }
   }
   // Achsenbeschriftung
-  ctx.textAlign = "left"; ctx.textBaseline = "alphabetic";
+  ctx.textAlign = "center"; ctx.textBaseline = "alphabetic";
   ctx.fillStyle = "rgba(29,29,27,.8)"; ctx.font = "600 22px system-ui,sans-serif";
-  ctx.fillText("Spule oben", toPx(R) + 19, toPy(st.d / 2) + 7);
-  ctx.fillText("Spule unten", toPx(R) + 19, toPy(-st.d / 2) + 7);
-  ctx.font = "19px system-ui,sans-serif"; ctx.fillText("Bild: 12 × 12 cm", 12, W - 14);
+  for (const [zc, txt] of [[-st.d / 2, "Spule 1"], [st.d / 2, "Spule 2"]]){ const q = scr(R, zc); ctx.fillText(txt, q[0], q[1] - 24); }
+  ctx.textAlign = "left"; ctx.font = "19px system-ui,sans-serif"; ctx.fillText("Bild: 12 × 12 cm", 12, W - 14);
 
   // Sensor
-  const sx = toPx(st.sx), sy = toPy(st.sz);
+  const [sx, sy] = scr(st.sx, st.sz);
   ctx.fillStyle = "#1d1d1b"; ctx.strokeStyle = "#fff"; ctx.lineWidth = 2.5;
-  ctx.beginPath(); ctx.roundRect(sx - 15, sy - 11, 30, 22, 3); ctx.fill(); ctx.stroke();
+  ctx.beginPath(); ctx.roundRect(sx - 11, sy - 15, 22, 30, 3); ctx.fill(); ctx.stroke();
   ctx.fillStyle = "#e5ec08"; ctx.beginPath(); ctx.arc(sx, sy, 3.5, 0, 7); ctx.fill();
   // Feldpfeil am Sensor
   const b = field(st.sx, st.sz, st.d, st.I), m = Math.hypot(b[0], b[1]);
   if (m > 1e-6){
-    const L = 26 + 34 * Math.min(1, m / BMAX), ux = b[0] / m, uz = b[1] / m, ex = sx + ux * L, ey = sy - uz * L;
+    const L = 26 + 34 * Math.min(1, m / BMAX), ux = b[0] / m, uz = b[1] / m, ex = sx + uz * L, ey = sy - ux * L;
     ctx.strokeStyle = "#fff"; ctx.lineWidth = 6; ctx.lineCap = "round";
     ctx.beginPath(); ctx.moveTo(sx, sy); ctx.lineTo(ex, ey); ctx.stroke();
     ctx.strokeStyle = "#1d1d1b"; ctx.lineWidth = 3;
@@ -308,78 +319,148 @@ function drawField(){
   }
 }
 
-// ---------- 3D-Ansicht: zwei Ringe, dazwischen die Schnittfläche mit dem Feldbild ----------
-// t = 0: schräg von oben (3D), t = 1: genau von vorne, dann ist es das Schnittbild
-const view = { t: 0, yaw: -0.5, pitch: 0.42 };
-const ease = x => x < 0.5 ? 2 * x * x : 1 - (-2 * x + 2) ** 2 / 2;
-function camera(){
-  const e = ease(view.t);
-  return { yaw: view.yaw * (1 - e), pitch: view.pitch * (1 - e), s: (0.8 + 0.2 * e) * W / (2 * VIEW), cy: W / 2 + 18 * (1 - e) };
+// ---------- 3D-Modell (three.js): unsere gedruckte Helmholtz-Spule, wahlweise mit Magnetfeld ----------
+// Einheiten im 3D-Modell: Millimeter. Spulenachse = x, oben = y, die Schnittfläche ist die Ebene z = 0.
+const glCv = $("gl");
+let mode = "model", renderer = null;
+try { renderer = new THREE.WebGLRenderer({ canvas: glCv, antialias: true, alpha: true }); } catch (e) { renderer = null; }
+const scene = new THREE.Scene();
+const cam = new THREE.PerspectiveCamera(30, 1, 10, 3000);
+const ORBIT = { az: 0.78, el: 0.36, dist: 300, ty: -8 };
+const FRONT = { az: 0, el: 0, dist: 60 / Math.tan(15 * Math.PI / 180), ty: 0 };   // Schnittfläche füllt genau das Bild
+const camState = { ...ORBIT };
+let userOrbit = { ...ORBIT };
+function placeCam(){
+  const c = camState;
+  cam.position.set(c.dist * Math.cos(c.el) * Math.sin(c.az), c.ty + c.dist * Math.sin(c.el), c.dist * Math.cos(c.el) * Math.cos(c.az));
+  cam.lookAt(0, c.ty, 0);
 }
-function proj(c, x, y, z){
-  const xr = x * Math.cos(c.yaw) - y * Math.sin(c.yaw), yr = x * Math.sin(c.yaw) + y * Math.cos(c.yaw);
-  return [W / 2 + c.s * xr, c.cy - c.s * (z * Math.cos(c.pitch) + yr * Math.sin(c.pitch))];
-}
-function render(){
-  const c = camera(), e = ease(view.t), ctx = vctx;
-  const dark = matchMedia("(prefers-color-scheme: dark)").matches;
-  ctx.setTransform(1, 0, 0, 1, 0, 0);
-  ctx.fillStyle = dark ? "#22201d" : "#f6f3ee"; ctx.fillRect(0, 0, W, W);
-  const ring = (zc, back) => {
-    const pts = [];
-    for (let n = 0; n <= 160; n++){ const a = 2 * Math.PI * n / 160, y = R * Math.sin(a); pts.push({ y, p: proj(c, R * Math.cos(a), y, zc) }); }
-    ctx.lineCap = "round";
-    for (const [w, col] of [[22, "#1d1d1b"], [17, back ? "#c25a10" : "#ec6608"]]){
-      ctx.lineWidth = w * (c.s / (W / (2 * VIEW))); ctx.strokeStyle = col; ctx.beginPath(); let on = false;
-      for (const q of pts){
-        const show = back ? q.y > 0 : q.y <= 0;
-        if (show){ on ? ctx.lineTo(...q.p) : ctx.moveTo(...q.p); on = true; } else on = false;
-      }
-      ctx.stroke();
-    }
-  };
-  const ringAlpha = 1 - e * e;
-  // hintere Ringhälften
-  ctx.globalAlpha = ringAlpha; ring(-st.d / 2, true); ring(st.d / 2, true); ctx.globalAlpha = 1;
-  // Schnittfläche mit Feldbild (affin, da Parallelprojektion)
-  const o = proj(c, -VIEW, 0, VIEW), px = proj(c, VIEW, 0, VIEW), pz = proj(c, -VIEW, 0, -VIEW);
-  ctx.save();
-  ctx.setTransform((px[0] - o[0]) / W, (px[1] - o[1]) / W, (pz[0] - o[0]) / W, (pz[1] - o[1]) / W, o[0], o[1]);
-  ctx.globalAlpha = 0.82 + 0.18 * e; ctx.drawImage(fieldCv, 0, 0);
-  ctx.globalAlpha = 1; ctx.strokeStyle = "#1d1d1b"; ctx.lineWidth = 3; ctx.strokeRect(0, 0, W, W);
-  ctx.restore();
-  // vordere Ringhälften und Achse
-  ctx.globalAlpha = ringAlpha; ring(-st.d / 2, false); ring(st.d / 2, false);
-  if (ringAlpha > 0.02){
-    ctx.setLineDash([8, 7]); ctx.strokeStyle = "#1d1d1b"; ctx.lineWidth = 2;
-    const a = proj(c, 0, 0, VIEW * 0.98), b = proj(c, 0, 0, -VIEW * 0.98);
-    ctx.beginPath(); ctx.moveTo(...a); ctx.lineTo(...b); ctx.stroke(); ctx.setLineDash([]);
-    ctx.fillStyle = dark ? "#f2efe9" : "#1d1d1b"; ctx.font = "600 22px system-ui,sans-serif"; ctx.textAlign = "left";
-    ctx.textAlign = "right";
-    for (const [zc, txt] of [[st.d / 2, "Spule oben"], [-st.d / 2, "Spule unten"]]){ const q = proj(c, -R, 0, zc); ctx.fillText(txt, q[0] - 18, q[1] + 8); }
-    ctx.textAlign = "left";
-    ctx.fillText("Schnittfläche", 14, W - 18);
-    ctx.font = "19px system-ui,sans-serif"; ctx.fillStyle = dark ? "#bfae9a" : "#7a6855";
-    ctx.fillText("Ø 6 cm · zum Drehen wischen", 14, 60);
+
+scene.add(new THREE.HemisphereLight(0xffffff, 0x50505a, 1.7));
+const sun = new THREE.DirectionalLight(0xffffff, 2.4); sun.position.set(140, 260, 180); scene.add(sun);
+const fill = new THREE.DirectionalLight(0xffffff, 0.7); fill.position.set(-200, 60, -80); scene.add(fill);
+
+// Schnitt: alles vor der Fläche (z > 0) wird weggeschnitten
+const cutPlane = new THREE.Plane(new THREE.Vector3(0, 0, -1), 0);
+if (renderer) renderer.localClippingEnabled = true;
+
+const blue = new THREE.MeshStandardMaterial({ color: 0x2338b8, roughness: 0.5, side: THREE.DoubleSide });
+const black = new THREE.MeshStandardMaterial({ color: 0x1c1c1e, roughness: 0.75, side: THREE.DoubleSide });
+const copperSide = new THREE.MeshStandardMaterial({ color: 0xb8622f, metalness: 0.45, roughness: 0.38, side: THREE.DoubleSide });
+// Kupferlack-Draht: feine Windungen als Streifen
+const wireCv = document.createElement("canvas"); wireCv.width = 8; wireCv.height = 16;
+{ const g = wireCv.getContext("2d"), gr = g.createLinearGradient(0, 0, 0, 16);
+  gr.addColorStop(0, "#6e3214"); gr.addColorStop(0.25, "#c8723a"); gr.addColorStop(0.5, "#f0a46a"); gr.addColorStop(0.75, "#c8723a"); gr.addColorStop(1, "#6e3214");
+  g.fillStyle = gr; g.fillRect(0, 0, 8, 16); }
+const wireTex = new THREE.CanvasTexture(wireCv);
+wireTex.colorSpace = THREE.SRGBColorSpace; wireTex.wrapS = wireTex.wrapT = THREE.RepeatWrapping; wireTex.repeat.set(1, 22);
+const copper = new THREE.MeshStandardMaterial({ map: wireTex, metalness: 0.4, roughness: 0.35, side: THREE.DoubleSide });
+const solids = [blue, black, copperSide, copper];
+
+// Kreisring mit Breite w in Achsrichtung (Achse = y, danach gedreht); gap = Schlitz oben (rad)
+function annulus(rin, rout, w, gap, matOut, matSide = matOut, matIn = matOut){
+  const g = new THREE.Group(), ts = 1.5 * Math.PI + gap / 2, L = 2 * Math.PI - gap;
+  g.add(new THREE.Mesh(new THREE.CylinderGeometry(rout, rout, w, 128, 1, true, ts, L), matOut));
+  g.add(new THREE.Mesh(new THREE.CylinderGeometry(rin, rin, w, 128, 1, true, ts, L), matIn));
+  for (const y of [-w / 2, w / 2]){
+    const ring = new THREE.Mesh(new THREE.RingGeometry(rin, rout, 128, 1, Math.PI / 2 - ts - L, L), matSide);
+    ring.rotation.x = Math.PI / 2; ring.position.y = y; g.add(ring);
   }
-  ctx.globalAlpha = 1;
+  return g;
 }
-let anim = null;
-function animateTo(target){
-  cancelAnimationFrame(anim);
-  const start = view.t, t0 = performance.now(), dur = 900 * Math.abs(target - start) + 1;
-  const step = now => { const k = Math.min(1, (now - t0) / dur); view.t = start + (target - start) * k; render(); if (k < 1) anim = requestAnimationFrame(step); else setMode(); };
-  anim = requestAnimationFrame(step);
+// eine Spule: Spulenkörper (blau, gedruckt) mit Kupferwicklung, Schlitz oben wie beim Original
+const WIND = 12, FL = 2.6, SLOT = 0.09, RIN = 21, ROUT = 37.5;
+function makeCoil(){
+  const g = new THREE.Group();
+  g.add(annulus(R * 1000 - 3.5, R * 1000 + 3.5, WIND, 0, copper, copperSide));
+  g.add(annulus(RIN, R * 1000 - 3.5, WIND, SLOT, blue));
+  for (const s of [-1, 1]){ const f = annulus(RIN, ROUT, FL, SLOT, blue); f.position.y = s * (WIND + FL) / 2; g.add(f); }
+  g.rotation.z = -Math.PI / 2;     // Achse von y nach x drehen
+  return g;
 }
-function setMode(){
-  const cut = view.t >= 1;
-  $("v3d").setAttribute("aria-pressed", !cut); $("vCut").setAttribute("aria-pressed", cut);
-  $("introText").innerHTML = cut
-    ? "Jetzt schaust du <b>genau von vorne</b> auf die Schnittfläche. Die vier orangen Kästchen sind die Stellen, wo der Draht durch die Fläche geht. <b>Verschieb den Sensor</b> (schwarzes Kästchen) mit dem Finger und schau, was er misst."
-    : "So sieht unsere Spule aus: <b>zwei Drahtringe übereinander</b>, wie bei unserem 3D-gedruckten Modell. Dazwischen schneiden wir in Gedanken eine Fläche durch die Mitte und färben sie nach der Stärke des Magnetfelds. Tipp auf <b>Schnitt von vorne</b>.";
+const coil1 = makeCoil(), coil2 = makeCoil();
+scene.add(coil1, coil2);
+const base = new THREE.Mesh(new THREE.BoxGeometry(104, 14, 64), black);
+base.position.y = -ROUT + 4 - 7; scene.add(base);
+
+const fieldTex = new THREE.CanvasTexture(fieldCv); fieldTex.colorSpace = THREE.SRGBColorSpace;
+const fieldMesh = new THREE.Mesh(new THREE.PlaneGeometry(VIEW * 2000, VIEW * 2000),
+  new THREE.MeshBasicMaterial({ map: fieldTex, side: THREE.DoubleSide, transparent: true, opacity: 0.75, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 }));
+scene.add(fieldMesh);
+
+function render(){
+  if (mode === "cut" && !animating){
+    vctx.drawImage(fieldCv, 0, 0); return;
+  }
+  if (!renderer) return;
+  coil1.position.x = -st.d * 500; coil2.position.x = st.d * 500;
+  const sim = mode !== "model";
+  fieldMesh.visible = sim;
+  fieldMesh.material.opacity = mode === "cut" ? 0.75 + 0.25 * flyK : 0.75;   // halb durchsichtig, damit man die Spulen dahinter sieht
+  for (const m of solids) m.clippingPlanes = sim ? [cutPlane] : [];
+  if (sim) fieldTex.needsUpdate = true;
+  placeCam(); renderer.render(scene, cam);
 }
-$("v3d").addEventListener("click", () => animateTo(0));
-$("vCut").addEventListener("click", () => animateTo(1));
+function resize(){
+  if (!renderer) return;
+  const w = glCv.clientWidth || 320;
+  renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
+  renderer.setSize(w, w, false); cam.aspect = 1; cam.updateProjectionMatrix(); render();
+}
+if (window.ResizeObserver) new ResizeObserver(resize).observe(glCv); else window.addEventListener("resize", resize);
+
+// Drehen per Wischen
+let rot = null;
+glCv.addEventListener("pointerdown", e => { rot = [e.clientX, e.clientY]; glCv.setPointerCapture(e.pointerId); glCv.style.cursor = "grabbing"; });
+glCv.addEventListener("pointermove", e => {
+  if (!rot || animating) return;
+  camState.az -= (e.clientX - rot[0]) * 0.009;
+  camState.el = Math.max(-0.15, Math.min(1.3, camState.el + (e.clientY - rot[1]) * 0.007));
+  rot = [e.clientX, e.clientY]; userOrbit = { ...camState }; render();
+});
+const endRot = () => { rot = null; glCv.style.cursor = "grab"; };
+glCv.addEventListener("pointerup", endRot); glCv.addEventListener("pointercancel", endRot);
+
+// Kamerafahrten zwischen 3D und Schnitt
+let animating = false, flyK = 1;
+const ease = x => x < 0.5 ? 2 * x * x : 1 - (-2 * x + 2) ** 2 / 2;
+function fly(target, done){
+  const from = { ...camState }, t0 = performance.now(), dur = 1000;
+  // kürzester Weg um die Achse
+  let daz = target.az - from.az; daz = Math.atan2(Math.sin(daz), Math.cos(daz));
+  animating = true;
+  const step = now => {
+    const k = ease(Math.min(1, (now - t0) / dur)); flyK = k;
+    camState.az = from.az + daz * k;
+    for (const key of ["el", "dist", "ty"]) camState[key] = from[key] + (target[key] - from[key]) * k;
+    render();
+    if (k < 1) requestAnimationFrame(step); else { animating = false; done && done(); }
+  };
+  requestAnimationFrame(step);
+}
+const TEXTS = {
+  model: "Das ist unsere <b>Helmholtz-Spule</b>: zwei gleiche Spulen mit je 330 Windungen Kupferdraht auf 3D-gedruckten Spulenkörpern. Wisch zum Drehen. Tipp auf <b>Magnetfeld</b>, um zu sehen, was beim Einschalten passiert.",
+  sim: "Wir schneiden die Spulen in Gedanken <b>der Länge nach durch</b>. Auf der Schnittfläche siehst du das Magnetfeld: Farbe = Stärke, Linien = Feldlinien. Tipp auf <b>Schnitt</b>, um genau von vorne draufzuschauen.",
+  cut: "Jetzt schaust du <b>genau von vorne</b> auf die Schnittfläche. Die orangen Kästchen sind die Stellen, an denen der Draht durch die Fläche geht. <b>Verschieb den Sensor</b> (schwarzes Kästchen) mit dem Finger und schau, was er misst."
+};
+function setMode(m){
+  if (animating) return;
+  const prev = mode; mode = m;
+  for (const [id, k] of [["vModel", "model"], ["vSim", "sim"], ["vCut", "cut"]]) $(id).setAttribute("aria-pressed", k === m);
+  $("introText").innerHTML = TEXTS[m];
+  $("tag").textContent = m === "cut" ? "Sensor mit dem Finger verschieben" : "zum Drehen wischen";
+  if (m === "cut"){
+    if (!renderer){ glCv.hidden = true; cv.hidden = false; render(); return; }
+    fly(FRONT, () => { glCv.hidden = true; cv.hidden = false; render(); });
+  } else {
+    if (prev === "cut"){ cv.hidden = true; glCv.hidden = false; Object.assign(camState, FRONT); fly(userOrbit); }
+    else render();
+  }
+}
+$("vModel").addEventListener("click", () => setMode("model"));
+$("vSim").addEventListener("click", () => setMode("sim"));
+$("vCut").addEventListener("click", () => setMode("cut"));
+if (!renderer){ $("vModel").hidden = $("vSim").hidden = true; }
 function updateField(){
   $("curO").value = Math.round(st.I * 1000) + " mA";
   $("distO").value = Math.round(st.d * 1000) + " mm" + (Math.abs(st.d - R) < 5e-4 ? " = R" : "");
@@ -394,27 +475,16 @@ function updateField(){
 let dragging = false;
 function pointerPos(e){
   const r = cv.getBoundingClientRect();
-  return [fromPx((e.clientX - r.left) / r.width * W), fromPy((e.clientY - r.top) / r.height * W)];
+  return unscr((e.clientX - r.left) / r.width * W, (e.clientY - r.top) / r.height * W);
 }
 function moveSensor(e){
   const [x, z] = pointerPos(e), lim = VIEW * 0.95;
   st.sx = Math.max(-lim, Math.min(lim, x)); st.sz = Math.max(-lim, Math.min(lim, z));
   updateField();
 }
-let last = null;
-cv.addEventListener("pointerdown", e => {
-  dragging = true; cv.setPointerCapture(e.pointerId); cv.style.cursor = "grabbing"; last = [e.clientX, e.clientY];
-  if (view.t >= 1) moveSensor(e);
-});
-cv.addEventListener("pointermove", e => {
-  if (!dragging) return;
-  if (view.t >= 1) { moveSensor(e); return; }
-  if (view.t > 0) return;
-  view.yaw = Math.max(-1.25, Math.min(1.25, view.yaw + (e.clientX - last[0]) * 0.01));
-  view.pitch = Math.max(0.05, Math.min(1.2, view.pitch + (e.clientY - last[1]) * 0.01));
-  last = [e.clientX, e.clientY]; render();
-});
-cv.addEventListener("pointerup", () => { dragging = false; cv.style.cursor = "grab"; });
+cv.addEventListener("pointerdown", e => { dragging = true; cv.setPointerCapture(e.pointerId); moveSensor(e); });
+cv.addEventListener("pointermove", e => { if (dragging) moveSensor(e); });
+cv.addEventListener("pointerup", () => { dragging = false; });
 cv.addEventListener("pointercancel", () => { dragging = false; });
 
 $("cur").addEventListener("input", e => { st.I = +e.target.value / 1000; updateField(); });
@@ -494,9 +564,9 @@ $("bCal").addEventListener("click", () => {
   updateCal();
 });
 $("bReset").addEventListener("click", () => { points = []; fit = null; $("bCal").disabled = true; $("calMsg").textContent = "Noch keine Messpunkte."; updateCal(); });
-matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => { drawCal(); render(); });
+matchMedia("(prefers-color-scheme: dark)").addEventListener("change", drawCal);
 
-setMode();
+setMode("model");
 updateField();
 </script>
 </body>
