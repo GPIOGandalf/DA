@@ -49,6 +49,9 @@ ol.steps li{margin-bottom:4px}
 .formula{font-family:ui-serif,Georgia,serif;font-size:1.05rem;text-align:center;margin:8px 0 2px}
 .legend{display:flex;align-items:center;gap:8px;font-size:.8rem;color:var(--muted);margin-top:8px}
 .legend i{flex:1;height:10px;border-radius:5px;background:linear-gradient(90deg,#fffbe0,#e5ec08 33%,#ec6608 67%,#5a3d2b)}
+.seg{display:flex;border:1px solid var(--line);border-radius:10px;overflow:hidden;margin:4px 0 10px}
+.seg button{flex:1;border:0;border-radius:0;background:transparent;color:var(--fg);padding:9px 6px;font-weight:600}
+.seg button[aria-pressed="true"]{background:var(--fg);color:var(--bg);font-weight:800}
 .small{font-size:.85rem;color:var(--muted)}
 footer{padding-bottom:32px;color:var(--muted);font-size:.85rem}
 </style>
@@ -63,8 +66,12 @@ footer{padding-bottom:32px;color:var(--muted);font-size:.85rem}
 <main>
   <section class="card">
     <h2>1 · Das Feld zwischen den Spulen</h2>
-    <p>Du siehst zwei Spulen von der Seite. <b>Verschieb den Sensor</b> (das schwarze Kästchen) mit dem Finger und schau, was er misst.</p>
-    <canvas id="field" width="640" height="640" aria-label="Magnetfeld der Helmholtz-Spule, Seitenansicht"></canvas>
+    <p id="introText"></p>
+    <div class="seg" role="group" aria-label="Ansicht">
+      <button id="v3d" aria-pressed="true">3D-Ansicht</button>
+      <button id="vCut" aria-pressed="false">Schnitt von vorne</button>
+    </div>
+    <canvas id="field" width="640" height="640" aria-label="Helmholtz-Spule mit Magnetfeld"></canvas>
     <div class="legend"><span>0 mT</span><i></i><span>10 mT</span></div>
     <p class="hint">Farbe = Feldstärke · Linien = Feldlinien · weiß umrandet = Bereich, in dem das Feld auf 1 % gleich ist</p>
 
@@ -160,7 +167,9 @@ const st = { I: 0.506, d: 0.030, sx: 0, sz: 0 };
 const fmtB = b => (Math.abs(b) < 0.0995e-3 ? (b * 1e6).toFixed(0) + " µT" : (b * 1e3).toFixed(2) + " mT");
 
 // ---------- Feldbild ----------
-const cv = $("field"), ctx = cv.getContext("2d"), W = cv.width;
+const cv = $("field"), vctx = cv.getContext("2d"), W = cv.width;
+const fieldCv = document.createElement("canvas"); fieldCv.width = fieldCv.height = W;
+const fctx = fieldCv.getContext("2d");
 const toPx = v => (v + VIEW) / (2 * VIEW) * W;          // x -> Pixel
 const toPy = v => (VIEW - v) / (2 * VIEW) * W;          // z -> Pixel (oben = +z)
 const fromPx = p => p / W * 2 * VIEW - VIEW;
@@ -236,6 +245,7 @@ function homogeneousContour(){
   return { segs, inside };
 }
 function drawField(){
+  const ctx = fctx;
   computeGrid();
   const BMAX = 10e-3;   // feste Farbskala 0 … 10 mT, damit man den Strom "sieht"
   const octx = off.getContext("2d"), img = octx.createImageData(GRID, GRID);
@@ -297,6 +307,79 @@ function drawField(){
     ctx.stroke(); ctx.lineCap = "butt";
   }
 }
+
+// ---------- 3D-Ansicht: zwei Ringe, dazwischen die Schnittfläche mit dem Feldbild ----------
+// t = 0: schräg von oben (3D), t = 1: genau von vorne, dann ist es das Schnittbild
+const view = { t: 0, yaw: -0.5, pitch: 0.42 };
+const ease = x => x < 0.5 ? 2 * x * x : 1 - (-2 * x + 2) ** 2 / 2;
+function camera(){
+  const e = ease(view.t);
+  return { yaw: view.yaw * (1 - e), pitch: view.pitch * (1 - e), s: (0.8 + 0.2 * e) * W / (2 * VIEW), cy: W / 2 + 18 * (1 - e) };
+}
+function proj(c, x, y, z){
+  const xr = x * Math.cos(c.yaw) - y * Math.sin(c.yaw), yr = x * Math.sin(c.yaw) + y * Math.cos(c.yaw);
+  return [W / 2 + c.s * xr, c.cy - c.s * (z * Math.cos(c.pitch) + yr * Math.sin(c.pitch))];
+}
+function render(){
+  const c = camera(), e = ease(view.t), ctx = vctx;
+  const dark = matchMedia("(prefers-color-scheme: dark)").matches;
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.fillStyle = dark ? "#22201d" : "#f6f3ee"; ctx.fillRect(0, 0, W, W);
+  const ring = (zc, back) => {
+    const pts = [];
+    for (let n = 0; n <= 160; n++){ const a = 2 * Math.PI * n / 160, y = R * Math.sin(a); pts.push({ y, p: proj(c, R * Math.cos(a), y, zc) }); }
+    ctx.lineCap = "round";
+    for (const [w, col] of [[22, "#1d1d1b"], [17, back ? "#c25a10" : "#ec6608"]]){
+      ctx.lineWidth = w * (c.s / (W / (2 * VIEW))); ctx.strokeStyle = col; ctx.beginPath(); let on = false;
+      for (const q of pts){
+        const show = back ? q.y > 0 : q.y <= 0;
+        if (show){ on ? ctx.lineTo(...q.p) : ctx.moveTo(...q.p); on = true; } else on = false;
+      }
+      ctx.stroke();
+    }
+  };
+  const ringAlpha = 1 - e * e;
+  // hintere Ringhälften
+  ctx.globalAlpha = ringAlpha; ring(-st.d / 2, true); ring(st.d / 2, true); ctx.globalAlpha = 1;
+  // Schnittfläche mit Feldbild (affin, da Parallelprojektion)
+  const o = proj(c, -VIEW, 0, VIEW), px = proj(c, VIEW, 0, VIEW), pz = proj(c, -VIEW, 0, -VIEW);
+  ctx.save();
+  ctx.setTransform((px[0] - o[0]) / W, (px[1] - o[1]) / W, (pz[0] - o[0]) / W, (pz[1] - o[1]) / W, o[0], o[1]);
+  ctx.globalAlpha = 0.82 + 0.18 * e; ctx.drawImage(fieldCv, 0, 0);
+  ctx.globalAlpha = 1; ctx.strokeStyle = "#1d1d1b"; ctx.lineWidth = 3; ctx.strokeRect(0, 0, W, W);
+  ctx.restore();
+  // vordere Ringhälften und Achse
+  ctx.globalAlpha = ringAlpha; ring(-st.d / 2, false); ring(st.d / 2, false);
+  if (ringAlpha > 0.02){
+    ctx.setLineDash([8, 7]); ctx.strokeStyle = "#1d1d1b"; ctx.lineWidth = 2;
+    const a = proj(c, 0, 0, VIEW * 0.98), b = proj(c, 0, 0, -VIEW * 0.98);
+    ctx.beginPath(); ctx.moveTo(...a); ctx.lineTo(...b); ctx.stroke(); ctx.setLineDash([]);
+    ctx.fillStyle = dark ? "#f2efe9" : "#1d1d1b"; ctx.font = "600 22px system-ui,sans-serif"; ctx.textAlign = "left";
+    ctx.textAlign = "right";
+    for (const [zc, txt] of [[st.d / 2, "Spule oben"], [-st.d / 2, "Spule unten"]]){ const q = proj(c, -R, 0, zc); ctx.fillText(txt, q[0] - 18, q[1] + 8); }
+    ctx.textAlign = "left";
+    ctx.fillText("Schnittfläche", 14, W - 18);
+    ctx.font = "19px system-ui,sans-serif"; ctx.fillStyle = dark ? "#bfae9a" : "#7a6855";
+    ctx.fillText("Ø 6 cm · zum Drehen wischen", 14, 60);
+  }
+  ctx.globalAlpha = 1;
+}
+let anim = null;
+function animateTo(target){
+  cancelAnimationFrame(anim);
+  const start = view.t, t0 = performance.now(), dur = 900 * Math.abs(target - start) + 1;
+  const step = now => { const k = Math.min(1, (now - t0) / dur); view.t = start + (target - start) * k; render(); if (k < 1) anim = requestAnimationFrame(step); else setMode(); };
+  anim = requestAnimationFrame(step);
+}
+function setMode(){
+  const cut = view.t >= 1;
+  $("v3d").setAttribute("aria-pressed", !cut); $("vCut").setAttribute("aria-pressed", cut);
+  $("introText").innerHTML = cut
+    ? "Jetzt schaust du <b>genau von vorne</b> auf die Schnittfläche. Die vier orangen Kästchen sind die Stellen, wo der Draht durch die Fläche geht. <b>Verschieb den Sensor</b> (schwarzes Kästchen) mit dem Finger und schau, was er misst."
+    : "So sieht unsere Spule aus: <b>zwei Drahtringe übereinander</b>, wie bei unserem 3D-gedruckten Modell. Dazwischen schneiden wir in Gedanken eine Fläche durch die Mitte und färben sie nach der Stärke des Magnetfelds. Tipp auf <b>Schnitt von vorne</b>.";
+}
+$("v3d").addEventListener("click", () => animateTo(0));
+$("vCut").addEventListener("click", () => animateTo(1));
 function updateField(){
   $("curO").value = Math.round(st.I * 1000) + " mA";
   $("distO").value = Math.round(st.d * 1000) + " mm" + (Math.abs(st.d - R) < 5e-4 ? " = R" : "");
@@ -304,7 +387,7 @@ function updateField(){
   $("tSensor").textContent = fmtB(bs);
   $("tCenter").textContent = fmtB(b0);
   $("tDev").textContent = b0 > 0 ? ((bs / b0 - 1) * 100).toFixed(1).replace("-0.0", "0.0") + " %" : "–";
-  drawField(); updateCal();
+  drawField(); render(); updateCal();
 }
 
 // Sensor ziehen
@@ -318,8 +401,19 @@ function moveSensor(e){
   st.sx = Math.max(-lim, Math.min(lim, x)); st.sz = Math.max(-lim, Math.min(lim, z));
   updateField();
 }
-cv.addEventListener("pointerdown", e => { dragging = true; cv.setPointerCapture(e.pointerId); cv.style.cursor = "grabbing"; moveSensor(e); });
-cv.addEventListener("pointermove", e => { if (dragging) moveSensor(e); });
+let last = null;
+cv.addEventListener("pointerdown", e => {
+  dragging = true; cv.setPointerCapture(e.pointerId); cv.style.cursor = "grabbing"; last = [e.clientX, e.clientY];
+  if (view.t >= 1) moveSensor(e);
+});
+cv.addEventListener("pointermove", e => {
+  if (!dragging) return;
+  if (view.t >= 1) { moveSensor(e); return; }
+  if (view.t > 0) return;
+  view.yaw = Math.max(-1.25, Math.min(1.25, view.yaw + (e.clientX - last[0]) * 0.01));
+  view.pitch = Math.max(0.05, Math.min(1.2, view.pitch + (e.clientY - last[1]) * 0.01));
+  last = [e.clientX, e.clientY]; render();
+});
 cv.addEventListener("pointerup", () => { dragging = false; cv.style.cursor = "grab"; });
 cv.addEventListener("pointercancel", () => { dragging = false; });
 
@@ -400,8 +494,9 @@ $("bCal").addEventListener("click", () => {
   updateCal();
 });
 $("bReset").addEventListener("click", () => { points = []; fit = null; $("bCal").disabled = true; $("calMsg").textContent = "Noch keine Messpunkte."; updateCal(); });
-matchMedia("(prefers-color-scheme: dark)").addEventListener("change", drawCal);
+matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => { drawCal(); render(); });
 
+setMode();
 updateField();
 </script>
 </body>
