@@ -1,0 +1,246 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Spulenteststand – Simulation</title>
+<meta name="description" content="Interaktive Magnetfeld-Simulation zur Diplomarbeit „Aufbau und Charakterisierung eines Spulenteststands“, HTL Hollabrunn.">
+<style>
+:root{
+  --bg:#ffffff; --fg:#1d1d1b; --muted:#7a6855; --card:#f6f3ee; --line:#e2dcd3;
+  --orange:#ec6608; --yellow:#e5ec08; --brown:#5a3d2b;
+}
+@media (prefers-color-scheme: dark){
+  :root{ --bg:#171614; --fg:#f2efe9; --muted:#bfae9a; --card:#22201d; --line:#3a352f; }
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+header{padding:20px 16px 8px;max-width:760px;margin:0 auto}
+header .bar{height:6px;background:linear-gradient(90deg,var(--yellow) 0 70%,transparent 70% 72%,var(--yellow) 72% 76%,transparent 76% 78%,var(--yellow) 78% 82%,transparent 82%);margin-bottom:14px}
+h1{font-size:1.45rem;line-height:1.2;margin:0 0 4px;font-weight:900}
+.sub{color:var(--muted);margin:0;font-size:.95rem}
+main{max-width:760px;margin:0 auto;padding:0 16px 32px}
+.tabs{display:flex;gap:8px;margin:16px 0}
+.tabs button{flex:1;border:2px solid var(--orange);background:transparent;color:var(--fg);padding:10px 8px;border-radius:10px;font:inherit;font-weight:700;cursor:pointer}
+.tabs button[aria-selected="true"]{background:var(--orange);color:#fff}
+section[hidden]{display:none}
+.card{background:var(--card);border-radius:14px;padding:14px}
+p.lead{margin:0 0 12px}
+canvas{display:block;width:100%;height:auto;border-radius:10px;touch-action:pan-y}
+.row{display:flex;align-items:center;gap:10px;margin:12px 0 2px}
+.row label{flex:1;font-weight:600;font-size:.95rem}
+.row output{font-variant-numeric:tabular-nums;color:var(--orange);font-weight:700;min-width:5.5em;text-align:right}
+input[type=range]{width:100%;accent-color:var(--orange);height:28px}
+.hint{color:var(--muted);font-size:.85rem;margin:2px 0 0}
+.seg{display:flex;border:1px solid var(--line);border-radius:10px;overflow:hidden;margin-top:12px}
+.seg button{flex:1;border:0;background:transparent;color:var(--fg);padding:9px 6px;font:inherit;font-size:.9rem;cursor:pointer}
+.seg button[aria-pressed="true"]{background:var(--fg);color:var(--bg);font-weight:700}
+.legend{display:flex;align-items:center;gap:8px;font-size:.8rem;color:var(--muted);margin-top:8px}
+.legend .grad{flex:1;height:10px;border-radius:5px}
+.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:12px}
+.stat{background:var(--bg);border-radius:10px;padding:8px}
+.stat b{display:block;font-size:1.15rem;color:var(--orange);font-variant-numeric:tabular-nums}
+.stat span{font-size:.75rem;color:var(--muted)}
+footer{max-width:760px;margin:0 auto;padding:0 16px 32px;color:var(--muted);font-size:.85rem}
+</style>
+</head>
+<body>
+<header>
+  <div class="bar"></div>
+  <h1>Aufbau und Charakterisierung eines Spulenteststands</h1>
+  <p class="sub">Diplomarbeit · HTL Hollabrunn · Elektronik und Technische Informatik</p>
+</header>
+<main>
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-tab="spule">Stellarator-Spule</button>
+    <button role="tab" aria-selected="false" data-tab="helm">Helmholtz-Spule</button>
+  </div>
+
+  <section id="spule">
+    <div class="card">
+      <p class="lead">Stellaratoren brauchen verbogene, <b>nicht planare</b> Spulen. Schon kleine Fertigungsfehler verändern das Magnetfeld. Probier es aus!</p>
+      <canvas id="map" width="600" height="600" aria-label="Feldkarte"></canvas>
+      <div class="legend" id="legend"></div>
+      <div class="seg" role="group" aria-label="Anzeige">
+        <button aria-pressed="true" data-view="feld">Magnetfeld</button>
+        <button aria-pressed="false" data-view="diff">Abweichung durch Fehler</button>
+      </div>
+      <div class="row"><label for="bend">Verbiegung der Spule</label><output id="bendO"></output></div>
+      <input id="bend" type="range" min="0" max="25" step="1" value="12">
+      <div class="row"><label for="err">Fertigungsfehler</label><output id="errO"></output></div>
+      <input id="err" type="range" min="0" max="5" step="0.5" value="1.5">
+      <p class="hint">Zufällige Abweichung der Drahtlage, wie sie beim Wickeln oder 3D-Druck entstehen kann.</p>
+      <div class="row"><label for="h">Messhöhe über der Spule</label><output id="hO"></output></div>
+      <input id="h" type="range" min="5" max="60" step="1" value="25">
+      <div class="stats">
+        <div class="stat"><b id="sMax">–</b><span>max. Feld Bz</span></div>
+        <div class="stat"><b id="sDev">–</b><span>max. Abweichung</span></div>
+        <div class="stat"><b id="sRel">–</b><span>relativ</span></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="helm" hidden>
+    <div class="card">
+      <p class="lead">Mit einer <b>Helmholtz-Spule</b> erzeugen wir ein bekanntes, gleichmäßiges Feld, um unseren Sensor zu kalibrieren. Am gleichmäßigsten wird es, wenn der Abstand genau dem Radius entspricht.</p>
+      <canvas id="plot" width="600" height="380" aria-label="Feldverlauf auf der Achse"></canvas>
+      <div class="row"><label for="d">Abstand der Spulen</label><output id="dO"></output></div>
+      <input id="d" type="range" min="10" max="70" step="1" value="30">
+      <div class="row"><label for="i">Strom</label><output id="iO"></output></div>
+      <input id="i" type="range" min="0" max="1000" step="2" value="506">
+      <p class="hint">Unsere Spule: Radius 30 mm, 330 Windungen je Spule.</p>
+      <div class="stats">
+        <div class="stat"><b id="hB">–</b><span>Feld in der Mitte</span></div>
+        <div class="stat"><b id="hU">–</b><span>Schwankung ±10 mm</span></div>
+        <div class="stat"><b id="hR">–</b><span>Abstand / Radius</span></div>
+      </div>
+    </div>
+  </section>
+</main>
+<footer>
+  Benedikt Klein · Yonathan Pieber · betreut von Dipl.-Ing. Dr. Georg Harrer<br>
+  Die Felder werden direkt auf deinem Gerät mit dem Biot-Savart-Gesetz berechnet. Es werden keine Daten gesendet oder gespeichert.
+</footer>
+
+<script>
+"use strict";
+const MU0 = 4e-7 * Math.PI;
+const $ = id => document.getElementById(id);
+
+// Tabs
+document.querySelectorAll(".tabs button").forEach(b => b.addEventListener("click", () => {
+  document.querySelectorAll(".tabs button").forEach(x => x.setAttribute("aria-selected", x === b));
+  document.querySelectorAll("main section").forEach(s => s.hidden = s.id !== b.dataset.tab);
+  if (b.dataset.tab === "helm") drawHelm(); else drawMap();
+}));
+
+// ---------- Nicht planare Spule ----------
+const NSEG = 160, N_WDG = 100, I_COIL = 1.0, HALF = 45e-3, L = 70e-3, GRID = 72;
+// feste Zufallsfolge, damit der "Fehler" bei jedem Laden gleich aussieht
+function rng(seed){ return () => (seed = (seed * 1664525 + 1013904223) >>> 0) / 4294967296; }
+const r = rng(7), noise = [];
+for (let k = 1; k <= 6; k++) noise.push({k, ax: r()*2-1, ay: r()*2-1, az: r()*2-1, p: r()*6.283});
+
+function coil(bend, err){
+  const pts = [];
+  for (let n = 0; n < NSEG; n++){
+    const t = 2*Math.PI*n/NSEG, c = Math.cos(t), s = Math.sin(t);
+    let x = HALF*Math.sign(c)*Math.sqrt(Math.abs(c)), y = HALF*Math.sign(s)*Math.sqrt(Math.abs(s));
+    let z = bend*Math.sin(2*t);
+    if (err){
+      for (const q of noise){ const f = Math.sin(q.k*t + q.p)/q.k; x += err*q.ax*f; y += err*q.ay*f; z += err*q.az*f; }
+    }
+    pts.push([x, y, z]);
+  }
+  return pts;
+}
+function bzMap(pts, h){
+  const out = new Float32Array(GRID*GRID), seg = [];
+  for (let n = 0; n < pts.length; n++){
+    const a = pts[n], b = pts[(n+1) % pts.length];
+    seg.push([(a[0]+b[0])/2, (a[1]+b[1])/2, (a[2]+b[2])/2, b[0]-a[0], b[1]-a[1]]);
+  }
+  const k = MU0*N_WDG*I_COIL/(4*Math.PI);
+  for (let j = 0; j < GRID; j++){
+    const py = L - 2*L*j/(GRID-1);
+    for (let i = 0; i < GRID; i++){
+      const px = -L + 2*L*i/(GRID-1);
+      let bz = 0;
+      for (const s of seg){
+        const rx = px-s[0], ry = py-s[1], rz = h-s[2];
+        const d = Math.sqrt(rx*rx+ry*ry+rz*rz);
+        bz += (s[3]*ry - s[4]*rx)/(d*d*d);
+      }
+      out[j*GRID+i] = bz*k*1e3; // mT
+    }
+  }
+  return out;
+}
+const FIELD = [[255,251,224],[229,236,8],[236,102,8],[90,61,43]];
+const DIV = [[40,90,170],[255,255,255],[236,102,8]];
+function ramp(stops, v){
+  v = Math.min(1, Math.max(0, v)); const n = stops.length-1, i = Math.min(n-1, Math.floor(v*n)), f = v*n-i;
+  return stops[i].map((c, k) => Math.round(c + (stops[i+1][k]-c)*f));
+}
+function cssGrad(stops){ return "linear-gradient(90deg," + stops.map(c => `rgb(${c})`).join(",") + ")"; }
+
+let view = "feld";
+document.querySelectorAll(".seg button").forEach(b => b.addEventListener("click", () => {
+  view = b.dataset.view;
+  document.querySelectorAll(".seg button").forEach(x => x.setAttribute("aria-pressed", x === b));
+  drawMap();
+}));
+
+const off = document.createElement("canvas"); off.width = off.height = GRID;
+function drawMap(){
+  const bend = +$("bend").value*1e-3, err = +$("err").value*1e-3, h = +$("h").value*1e-3;
+  $("bendO").value = $("bend").value + " mm"; $("errO").value = "± " + $("err").value + " mm"; $("hO").value = $("h").value + " mm";
+  const ideal = coil(bend, 0), real = coil(bend, err);
+  const A = bzMap(ideal, h), B = bzMap(real, h);
+  let max = 0, dev = 0;
+  for (let n = 0; n < A.length; n++){ max = Math.max(max, Math.abs(B[n])); dev = Math.max(dev, Math.abs(B[n]-A[n])); }
+  let min = Infinity, mx = -Infinity; for (const v of B){ min = Math.min(min, v); mx = Math.max(mx, v); }
+  const octx = off.getContext("2d"), img = octx.createImageData(GRID, GRID);
+  const dScale = Math.max(dev, 1e-6);
+  for (let n = 0; n < A.length; n++){
+    const c = view === "feld" ? ramp(FIELD, (B[n]-min)/(mx-min || 1)) : ramp(DIV, 0.5 + (B[n]-A[n])/(2*dScale));
+    img.data.set([c[0], c[1], c[2], 255], n*4);
+  }
+  octx.putImageData(img, 0, 0);
+  const cv = $("map"), ctx = cv.getContext("2d"), W = cv.width;
+  ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = "high";
+  ctx.drawImage(off, 0, 0, W, W);
+  const sx = x => (x+L)/(2*L)*W, sy = y => (L-y)/(2*L)*W;
+  const path = pts => { ctx.beginPath(); pts.forEach((p, n) => n ? ctx.lineTo(sx(p[0]), sy(p[1])) : ctx.moveTo(sx(p[0]), sy(p[1]))); ctx.closePath(); ctx.stroke(); };
+  ctx.lineWidth = 3; ctx.setLineDash([10, 7]); ctx.strokeStyle = "rgba(29,29,27,.55)"; path(ideal);
+  ctx.setLineDash([]); ctx.strokeStyle = "#1d1d1b"; if (err) path(real);
+  ctx.fillStyle = "rgba(29,29,27,.75)"; ctx.font = "600 26px system-ui,sans-serif";
+  ctx.fillText(view === "feld" ? "Bz in " + $("h").value + " mm Höhe" : "Bz (mit Fehler) − Bz (ideal)", 14, 32);
+  ctx.font = "22px system-ui,sans-serif"; ctx.fillText("14 × 14 cm", 14, W-14);
+  $("legend").innerHTML = view === "feld"
+    ? `<span>${min.toFixed(2)} mT</span><div class="grad" style="background:${cssGrad(FIELD)}"></div><span>${mx.toFixed(2)} mT</span>`
+    : `<span>−${(dev*1000).toFixed(0)} µT</span><div class="grad" style="background:${cssGrad(DIV)}"></div><span>+${(dev*1000).toFixed(0)} µT</span>`;
+  $("sMax").textContent = max.toFixed(2) + " mT";
+  $("sDev").textContent = (dev*1000).toFixed(0) + " µT";
+  $("sRel").textContent = (100*dev/max).toFixed(1) + " %";
+}
+
+// ---------- Helmholtz ----------
+const R = 30e-3, NH = 330;
+function bAxis(z, d, I){
+  const f = zz => Math.pow(R*R + zz*zz, -1.5);
+  return MU0*NH*I*R*R/2*(f(z-d/2) + f(z+d/2));
+}
+function drawHelm(){
+  const d = +$("d").value*1e-3, I = +$("i").value*1e-3;
+  $("dO").value = $("d").value + " mm"; $("iO").value = $("i").value + " mA";
+  const cv = $("plot"), ctx = cv.getContext("2d"), W = cv.width, H = cv.height;
+  const dark = matchMedia("(prefers-color-scheme: dark)").matches, fg = dark ? "#f2efe9" : "#1d1d1b", mut = dark ? "#bfae9a" : "#7a6855";
+  ctx.clearRect(0, 0, W, H);
+  const Z = 60e-3, padL = 78, padB = 44, padT = 18, pw = W-padL-34, ph = H-padT-padB;
+  const yMax = 10; // mT, feste Achse damit man Änderungen sieht
+  const X = z => padL + (z+Z)/(2*Z)*pw, Y = b => padT + ph - Math.min(b, yMax)/yMax*ph;
+  ctx.fillStyle = "rgba(229,236,8,.25)"; ctx.fillRect(X(-10e-3), padT, X(10e-3)-X(-10e-3), ph);
+  ctx.strokeStyle = mut; ctx.lineWidth = 1; ctx.font = "22px system-ui,sans-serif"; ctx.fillStyle = mut;
+  for (let b = 0; b <= yMax; b += 2.5){ ctx.beginPath(); ctx.moveTo(padL, Y(b)); ctx.lineTo(padL+pw, Y(b)); ctx.globalAlpha = .25; ctx.stroke(); ctx.globalAlpha = 1; ctx.fillText(b + " mT", 2, Y(b)+7); }
+  for (let z = -60; z <= 60; z += 30) { ctx.textAlign = "center"; ctx.fillText(z + " mm", X(z*1e-3), H-12); ctx.textAlign = "left"; };
+  // Spulenpositionen
+  ctx.fillStyle = "#ec6608";
+  [-d/2, d/2].forEach(zc => ctx.fillRect(X(zc)-3, padT, 6, ph));
+  ctx.strokeStyle = fg; ctx.lineWidth = 3; ctx.beginPath();
+  for (let n = 0; n <= 240; n++){ const z = -Z + 2*Z*n/240, b = bAxis(z, d, I)*1e3; n ? ctx.lineTo(X(z), Y(b)) : ctx.moveTo(X(z), Y(b)); }
+  ctx.stroke();
+  const b0 = bAxis(0, d, I)*1e3;
+  let lo = Infinity, hi = -Infinity;
+  for (let n = 0; n <= 40; n++){ const b = bAxis(-10e-3 + 20e-3*n/40, d, I); lo = Math.min(lo, b); hi = Math.max(hi, b); }
+  $("hB").textContent = b0.toFixed(2) + " mT";
+  $("hU").textContent = hi > 0 ? (100*(hi-lo)/hi).toFixed(1) + " %" : "–";
+  $("hR").textContent = (d/R).toFixed(2);
+}
+
+["bend","err","h"].forEach(id => $(id).addEventListener("input", drawMap));
+["d","i"].forEach(id => $(id).addEventListener("input", drawHelm));
+drawMap(); drawHelm();
+</script>
+</body>
+</html>
