@@ -8,7 +8,7 @@ Der Hall-Sensor ist montiert, aber **nicht angeschlossen**. Die angezeigten Wert
 2. **Statische IP am LAN-Adapter** setzen. Der Pi hängt direkt per LAN-Kabel am Laptop und hat die feste IP `192.168.10.2`.
    - Windows-Taste → „Netzwerkverbindungen anzeigen“ → **Ethernet** (LAN-Adapter) → Rechtsklick → *Eigenschaften*
    - *Internetprotokoll, Version 4 (TCP/IPv4)* → *Eigenschaften* → **Folgende IP-Adresse verwenden**
-   - IP-Adresse: `192.168.10.1` · Subnetzmaske: `255.255.255.0` · Gateway: leer lassen → OK
+   - IP-Adresse: `192.168.10.4` · Subnetzmaske: `255.255.255.0` · Gateway: leer lassen → OK
 3. Test: Eingabeaufforderung öffnen → `ping 192.168.10.2` → es muss „Antwort von 192.168.10.2“ kommen.
 
 ## Einschalten
